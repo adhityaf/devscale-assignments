@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ekstrak abstrak</title>
+  <style>
+    :root { color-scheme: dark; --bg: #111214; --surface: #1b1d20; --fg: #f1f0eb; --muted: #b7b8bc; --border: #555a63; --accent: #c3dfc8; --error: #ffb4ab; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 system-ui, sans-serif; }
+    main { max-width: 76ch; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    nav { margin-bottom: 2rem; }
+    a { color: var(--accent); text-underline-offset: .2em; }
+    h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 .75rem; }
+    h2 { margin-top: 2rem; font-size: 1.4rem; }
+    p, #status { color: var(--muted); }
+    label { display: block; font-weight: 600; margin: 1.75rem 0 .5rem; }
+    textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface); color: var(--fg); padding: 1rem; font: inherit; caret-color: var(--accent); }
+    textarea::placeholder { color: var(--muted); }
+    ::selection { background: var(--accent); color: var(--bg); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    input { display: block; width: 100%; padding: .75rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface); color: var(--fg); font: inherit; }
+    blockquote { margin: .5rem 0; padding-left: 1rem; border-left: 1px solid var(--border); color: var(--muted); overflow-wrap: anywhere; }
+    button { margin-top: 1rem; border: 1px solid var(--accent); border-radius: .375rem; padding: .75rem 1.25rem; background: var(--accent); color: var(--bg); font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: .65; cursor: wait; }
+    #status[data-error="true"] { color: var(--error); }
+    dt { font-weight: 600; margin-top: 1.25rem; }
+    dd { margin: .25rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <nav><a href="/pipelines">Buka pipeline di Studio</a></nav>
+    <h1>Ekstrak abstrak</h1>
+    <p>Tempel abstrak langsung, tanpa format JSON. Teks asli dan hasil ekstraksinya akan disimpan ke SQLite.</p>
+    <form id="abstract-form">
+      <label for="abstract">Teks abstrak</label>
+      <textarea id="abstract" name="text" required maxlength="100000" aria-describedby="input-help" placeholder="Tempel abstrak lengkap beserta kata kunci jika tersedia."></textarea>
+      <p id="input-help">Maksimal 100.000 karakter. Setiap ekstraksi menggunakan API model AI dan dapat dikenai biaya oleh provider.</p>
+      <button type="submit">Ekstrak dan simpan</button>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+    <section id="result" aria-labelledby="result-heading" hidden>
+      <h2 id="result-heading">Hasil ekstraksi</h2>
+      <p id="saved-id"></p>
+      <dl id="fields"></dl>
+      <p>Masukkan ID ini ke kolom <code>abstractionId</code> di Studio untuk membandingkan topik atau menjelaskan abstrak.</p>
+    </section>
+    <section aria-labelledby="compare-heading">
+      <h2 id="compare-heading">Bandingkan judul dengan abstrak</h2>
+      <p>ID terisi otomatis setelah ekstraksi. Kamu juga bisa memakai ID abstrak yang sudah tersimpan.</p>
+      <form id="compare-form">
+        <label for="abstraction-id">ID abstrak tersimpan</label>
+        <input id="abstraction-id" name="abstractionId" type="number" min="1" step="1" required>
+        <label for="research-title">Judul penelitianmu</label>
+        <input id="research-title" name="title" type="text" maxlength="2000" required>
+        <button type="submit">Bandingkan judul</button>
+      </form>
+      <p id="compare-status" role="status" aria-live="polite"></p>
+      <section id="comparison" aria-labelledby="comparison-heading" hidden>
+        <h3 id="comparison-heading">Hasil perbandingan</h3>
+        <p id="verdict"></p>
+        <p id="comparison-reason"></p>
+        <dl id="comparison-aspects"></dl>
+        <p id="missing-aspects"></p>
+        <p id="recommendation"></p>
+      </section>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#abstract-form');
+    const button = form.querySelector('button');
+    const status = document.querySelector('#status');
+    const result = document.querySelector('#result');
+    const labels = { background: 'Latar belakang', objective: 'Tujuan', methodology: 'Metodologi', results: 'Hasil', conclusion: 'Kesimpulan', keywords: 'Kata kunci' };
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = document.querySelector('#abstract').value;
+      if (!text.trim()) {
+        status.textContent = 'Teks abstrak tidak boleh kosong.';
+        status.dataset.error = 'true';
+        return;
+      }
+      button.disabled = true;
+      form.setAttribute('aria-busy', 'true');
+      status.dataset.error = 'false';
+      status.textContent = 'Mengekstrak abstrak dan menyimpan hasil…';
+      result.hidden = true;
+      try {
+        const response = await fetch('/abstract', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: text });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Ekstraksi gagal. Coba lagi.');
+        document.querySelector('#saved-id').textContent = 'ID abstrak: ' + data.id;
+        document.querySelector('#abstraction-id').value = String(data.id);
+        const fields = document.querySelector('#fields');
+        fields.replaceChildren();
+        for (const [key, label] of Object.entries(labels)) {
+          const title = document.createElement('dt');
+          const value = document.createElement('dd');
+          title.textContent = label;
+          value.textContent = data[key] ?? 'Tidak disebutkan dalam abstrak.';
+          fields.append(title, value);
+        }
+        result.hidden = false;
+        status.textContent = 'Abstrak berhasil diekstrak dan disimpan.';
+      } catch (error) {
+        status.dataset.error = 'true';
+        status.textContent = error instanceof Error ? error.message : 'Gagal menghubungi server. Periksa Studio lalu coba lagi.';
+      } finally {
+        button.disabled = false;
+        form.removeAttribute('aria-busy');
+      }
+    });
+    document.querySelector('#compare-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const compareForm = event.currentTarget;
+      const compareButton = compareForm.querySelector('button');
+      const compareStatus = document.querySelector('#compare-status');
+      const comparison = document.querySelector('#comparison');
+      compareButton.disabled = true;
+      compareForm.setAttribute('aria-busy', 'true');
+      compareStatus.textContent = 'Membandingkan judul dengan bukti dalam abstrak…';
+      comparison.hidden = true;
+      try {
+        const response = await fetch('/abstract/compare', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            abstractionId: Number(document.querySelector('#abstraction-id').value),
+            title: document.querySelector('#research-title').value,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Perbandingan gagal.');
+        const verdicts = { relevant: 'Cocok', partially_relevant: 'Cocok sebagian', not_relevant: 'Tidak cocok', insufficient_information: 'Informasi belum cukup' };
+        const aspects = { focus: 'Fokus penelitian', object: 'Objek penelitian', method: 'Metode', context: 'Konteks' };
+        const statuses = { match: 'Cocok', mismatch: 'Berbeda', not_stated: 'Tidak disebutkan dalam abstrak', not_applicable: 'Tidak disebutkan dalam judul' };
+        document.querySelector('#verdict').textContent = verdicts[data.relevance];
+        document.querySelector('#comparison-reason').textContent = data.reason;
+        const list = document.querySelector('#comparison-aspects');
+        list.replaceChildren();
+        for (const item of data.comparisons) {
+          const term = document.createElement('dt');
+          term.textContent = aspects[item.aspect] + ' — ' + statuses[item.status];
+          const detail = document.createElement('dd');
+          detail.textContent = 'Judul: ' + (item.titleRequirement ?? 'Tidak ditentukan') + '\nAbstrak: ' + (item.abstractCoverage ?? 'Tidak disebutkan');
+          for (const quote of item.evidence) {
+            const evidence = document.createElement('blockquote');
+            evidence.textContent = quote;
+            detail.append(evidence);
+          }
+          list.append(term, detail);
+        }
+        document.querySelector('#missing-aspects').textContent = data.missingAspects.length ? 'Belum tercakup: ' + data.missingAspects.join('; ') : 'Model tidak menemukan aspek judul yang belum tercakup.';
+        document.querySelector('#recommendation').textContent = data.recommendation;
+        comparison.hidden = false;
+        compareStatus.textContent = 'Perbandingan selesai. Hasil ini menilai kecocokan topik, bukan kualitas ilmiah paper.';
+      } catch (error) {
+        compareStatus.textContent = error instanceof Error ? error.message : 'Perbandingan gagal. Periksa koneksi lalu coba lagi.';
+      } finally {
+        compareButton.disabled = false;
+        compareForm.removeAttribute('aria-busy');
+      }
+    });
+  </script>
+</body>
+</html>

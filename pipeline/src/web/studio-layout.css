@@ -1,0 +1,6 @@
+/* Studio 1.5: the tab's implicit grid row expands beyond its clipped parent. */
+aside > div.grid.overflow-hidden {
+  display: block;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
